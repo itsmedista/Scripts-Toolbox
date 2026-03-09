@@ -54,12 +54,19 @@ if ($invalidTargetSkus.Count -gt 0) {
 
 $targetLicenseLookup = Get-TargetLicenseLookup -LicenseDefinitions $TargetLicenses
 
-# Use beta for signInActivity + lastNonInteractiveSignInDateTime
-Write-StepProgress -Id $mainProgressId -Activity $mainActivity -Status "Loading users from Microsoft Graph (beta)" -CurrentStep 3 -TotalSteps $totalSteps
-$usersUri = "https://graph.microsoft.com/beta/users?`$select=id,displayName,userPrincipalName,passwordPolicies,assignedLicenses,signInActivity,onPremisesExtensionAttributes&`$top=999"
-$allUsers = Get-GraphPagedResults -Uri $usersUri -ProgressId 4 -ProgressActivity "Loading users"
+Write-StepProgress -Id $mainProgressId -Activity $mainActivity -Status "Retrieving accounts with target licenses" -CurrentStep 3 -TotalSteps $totalSteps
+$userProperties = @(
+    "id",
+    "displayName",
+    "userPrincipalName",
+    "passwordPolicies",
+    "assignedLicenses",
+    "signInActivity",
+    "onPremisesExtensionAttributes"
+)
+$allUsers = Get-UsersWithTargetLicenses -LicenseDefinitions $TargetLicenses -UserProperties $userProperties -ProgressId 4 -ProgressActivity "Retrieving accounts with target licenses"
 
-Write-StepProgress -Id $mainProgressId -Activity $mainActivity -Status "Filtering and building inventory rows" -CurrentStep 4 -TotalSteps $totalSteps
+Write-StepProgress -Id $mainProgressId -Activity $mainActivity -Status "Building inventory rows" -CurrentStep 4 -TotalSteps $totalSteps
 $outputRows = @()
 $totalUsers = $allUsers.Count
 

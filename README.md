@@ -27,6 +27,7 @@ Reusable functions used by multiple scripts:
 - `ConvertTo-NormalizedSkuToken`: Normalizes license IDs for matching.
 - `Get-TargetLicenseLookup`: Builds lookup map from static license objects.
 - `Get-MatchingTargetLicensesForUser`: Resolves matched target licenses for a user.
+- `Get-UsersWithTargetLicenses`: Uses `Get-MgUser -Property` and `Where-Object` to return users whose `AssignedLicenses.SkuId` matches target licenses.
 - `ConvertTo-PasswordPolicyList`: Normalizes `passwordPolicies` text.
 - `Get-UpdatedPasswordPolicies`: Adds `DisablePasswordExpiration` if missing.
 
@@ -73,9 +74,9 @@ Default target licenses:
   - SKU: `295a8eb0-f78d045c708b5b01eed5ed02dff`
 
 Behavior:
-- Reads users and assigned licenses from Graph.
+- Reads users and assigned licenses from Graph with `Get-MgUser -Property`.
 - Uses static target license objects (no `subscribedSkus` query).
-- Filters users matching the target licenses.
+- Filters users with `Where-Object` where `AssignedLicenses.SkuId` matches one of the target license SKUs.
 - Checks `passwordPolicies`.
 - If needed, patches the user to add `DisablePasswordExpiration`.
 - Logs all actions to a log file.

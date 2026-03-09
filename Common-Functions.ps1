@@ -206,6 +206,59 @@ function Get-MatchingTargetLicensesForUser {
     return @($matchedLicenses | Sort-Object -Property Sku -Unique)
 }
 
+function Get-UsersWithTargetLicenses {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [array]$LicenseDefinitions,
+
+        [Parameter(Mandatory = $true)]
+        [string[]]$UserProperties,
+
+        [Parameter(Mandatory = $false)]
+        [int]$ProgressId = 20,
+
+        [Parameter(Mandatory = $false)]
+        [string]$ProgressActivity = "Retrieving users with target licenses"
+    )
+
+    $licenses = @(
+        foreach ($license in $LicenseDefinitions) {
+            $token = ConvertTo-NormalizedSkuToken -SkuId ([string]$license.Sku)
+            if (-not [string]::IsNullOrWhiteSpace($token)) {
+                $token
+            }
+        }
+    ) | Sort-Object -Unique
+
+    $licenseSet = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+    foreach ($licenseToken in $licenses) {
+        [void]$licenseSet.Add($licenseToken)
+    }
+
+    Write-Progress -Id $ProgressId -Activity $ProgressActivity -Status "Loading users with Get-MgUser" -PercentComplete -1
+    $users = Get-MgUser -All -Property $UserProperties
+
+    Write-Progress -Id $ProgressId -Activity $ProgressActivity -Status "Filtering users by assigned license SKU" -PercentComplete -1
+    $matchedUsers = $users | Where-Object {
+        if (-not $_.AssignedLicenses -or $_.AssignedLicenses.Count -eq 0) {
+            return $false
+        }
+
+        foreach ($assignedLicense in $_.AssignedLicenses) {
+            $assignedToken = ConvertTo-NormalizedSkuToken -SkuId ([string]$assignedLicense.SkuId)
+            if ($licenseSet.Contains($assignedToken)) {
+                return $true
+            }
+        }
+
+        return $false
+    }
+
+    Write-Progress -Id $ProgressId -Activity $ProgressActivity -Completed
+    return @($matchedUsers)
+}
+
 function ConvertTo-PasswordPolicyList {
     [CmdletBinding()]
     param(

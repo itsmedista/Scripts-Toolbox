@@ -65,11 +65,17 @@ if ($invalidTargetSkus.Count -gt 0) {
 }
 
 Write-StepProgress -Id $mainProgressId -Activity $mainActivity -Status "Loading users" -CurrentStep 3 -TotalSteps $totalSteps
-$usersUri = "https://graph.microsoft.com/v1.0/users?`$select=id,displayName,userPrincipalName,passwordPolicies,assignedLicenses&`$top=999"
-$allUsers = Get-GraphPagedResults -Uri $usersUri -ProgressId 4 -ProgressActivity "Loading users"
-Write-LogEntry -LogPath $LogPath -Message ("Loaded {0} users from Graph." -f $allUsers.Count)
+$userProperties = @(
+    "id",
+    "displayName",
+    "userPrincipalName",
+    "passwordPolicies",
+    "assignedLicenses"
+)
+$allUsers = Get-UsersWithTargetLicenses -LicenseDefinitions $TargetLicenses -UserProperties $userProperties -ProgressId 4 -ProgressActivity "Retrieving accounts with target licenses"
+Write-LogEntry -LogPath $LogPath -Message ("Loaded {0} target-licensed users from Graph." -f $allUsers.Count)
 
-Write-StepProgress -Id $mainProgressId -Activity $mainActivity -Status "Filtering room accounts by target SKUs" -CurrentStep 4 -TotalSteps $totalSteps
+Write-StepProgress -Id $mainProgressId -Activity $mainActivity -Status "Preparing remediation list" -CurrentStep 4 -TotalSteps $totalSteps
 $licensedRoomUsers = @()
 foreach ($user in $allUsers) {
     $matchedLicenses = Get-MatchingTargetLicensesForUser -User $user -TargetLicenseLookup $targetLicenseLookup
