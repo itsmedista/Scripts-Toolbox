@@ -1,3 +1,4 @@
+[CmdletBinding()]
 param(
     [Parameter(Mandatory = $false)]
     [string]$OutputPath = "C:\Temp\TeamsRoomAccountInventory.csv",
@@ -21,18 +22,19 @@ if (-not (Test-Path -LiteralPath $helperPath)) {
 $mainProgressId = 0
 $mainActivity = "Teams Rooms account inventory"
 $totalSteps = 5
+$requiredScopes = @(
+    "User.Read.All",
+    "Directory.Read.All",
+    "AuditLog.Read.All"
+)
 
 if (-not $SkipConnect) {
     Write-StepProgress -Id $mainProgressId -Activity $mainActivity -Status "Connecting to Microsoft Graph" -CurrentStep 1 -TotalSteps $totalSteps
-    $scopes = @(
-        "User.Read.All",
-        "Directory.Read.All",
-        "AuditLog.Read.All"
-    )
-    Connect-MgGraph -Scopes $scopes -NoWelcome
+    Connect-MgGraph -Scopes $requiredScopes -NoWelcome
 }
 else {
     Write-StepProgress -Id $mainProgressId -Activity $mainActivity -Status "Skipping Graph connection (-SkipConnect)" -CurrentStep 1 -TotalSteps $totalSteps
+    [void](Assert-GraphConnection -RequiredScopes $requiredScopes)
 }
 
 Write-StepProgress -Id $mainProgressId -Activity $mainActivity -Status "Preparing static target licenses" -CurrentStep 2 -TotalSteps $totalSteps
@@ -67,7 +69,7 @@ $userProperties = @(
 $allUsers = Get-UsersWithTargetLicenses -LicenseDefinitions $TargetLicenses -UserProperties $userProperties -ProgressId 4 -ProgressActivity "Retrieving accounts with target licenses"
 
 Write-StepProgress -Id $mainProgressId -Activity $mainActivity -Status "Building inventory rows" -CurrentStep 4 -TotalSteps $totalSteps
-$outputRows = @()
+$outputRows = [System.Collections.Generic.List[object]]::new()
 $totalUsers = $allUsers.Count
 
 for ($index = 0; $index -lt $totalUsers; $index++) {
@@ -86,7 +88,7 @@ for ($index = 0; $index -lt $totalUsers; $index++) {
 
     $ext = Get-UserExtensionAttributes -ExtensionObject $user.onPremisesExtensionAttributes
 
-    $outputRows += [PSCustomObject]@{
+    [void]$outputRows.Add([PSCustomObject]@{
         AccountName                      = $user.displayName
         UPN                              = $user.userPrincipalName
         LastNonInteractiveSignInDateTime = $user.signInActivity.lastNonInteractiveSignInDateTime
@@ -107,7 +109,7 @@ for ($index = 0; $index -lt $totalUsers; $index++) {
         ExtensionAttribute13             = $ext.extensionAttribute13
         ExtensionAttribute14             = $ext.extensionAttribute14
         ExtensionAttribute15             = $ext.extensionAttribute15
-    }
+    })
 }
 Write-Progress -Id 2 -Activity "Processing users" -Completed
 
@@ -120,5 +122,9 @@ $outputRows |
     Export-Csv -Path $OutputPath -NoTypeInformation -Encoding UTF8
 
 Write-Progress -Id $mainProgressId -Activity $mainActivity -Completed
-Write-Host "Export complete: $OutputPath"
-Write-Host "Rows exported: $($outputRows.Count)"
+$resolvedOutputPath = (Resolve-Path -LiteralPath $OutputPath).Path
+[PSCustomObject]@{
+    OutputPath  = $resolvedOutputPath
+    RowsExported = $outputRows.Count
+    GeneratedAt = (Get-Date).ToString("o")
+}

@@ -10,10 +10,13 @@ function Get-GraphPagedResults {
         [int]$ProgressId = 1,
 
         [Parameter(Mandatory = $false)]
-        [string]$ProgressActivity = "Calling Microsoft Graph"
+        [string]$ProgressActivity = "Calling Microsoft Graph",
+
+        [Parameter(Mandatory = $false)]
+        [hashtable]$Headers = @{}
     )
 
-    $items = @()
+    $items = [System.Collections.Generic.List[object]]::new()
     $nextLink = $Uri
     $page = 0
 
@@ -21,15 +24,23 @@ function Get-GraphPagedResults {
         $page++
         Write-Progress -Id $ProgressId -Activity $ProgressActivity -Status "Retrieving page $page" -PercentComplete -1
 
-        $response = Invoke-MgGraphRequest -Method GET -Uri $nextLink
+        $response = if ($Headers.Count -gt 0) {
+            Invoke-MgGraphRequest -Method GET -Uri $nextLink -Headers $Headers
+        }
+        else {
+            Invoke-MgGraphRequest -Method GET -Uri $nextLink
+        }
+
         if ($response.value) {
-            $items += $response.value
+            foreach ($item in @($response.value)) {
+                [void]$items.Add($item)
+            }
         }
         $nextLink = $response.'@odata.nextLink'
     }
 
     Write-Progress -Id $ProgressId -Activity $ProgressActivity -Completed
-    return $items
+    return @($items)
 }
 
 function Get-UserExtensionAttributes {
@@ -49,7 +60,7 @@ function Get-UserExtensionAttributes {
         return $result
     }
 
-    foreach ($key in $result.Keys) {
+    foreach ($key in @($result.Keys)) {
         if ($ExtensionObject.PSObject.Properties.Name -contains $key) {
             $result[$key] = $ExtensionObject.$key
         }
@@ -69,9 +80,14 @@ function Ensure-Directory {
         return
     }
 
-    if (-not (Test-Path -LiteralPath $Path)) {
-        New-Item -Path $Path -ItemType Directory -Force | Out-Null
+    if (Test-Path -LiteralPath $Path) {
+        if (-not (Test-Path -LiteralPath $Path -PathType Container)) {
+            throw "Path exists but is not a directory: $Path"
+        }
+        return
     }
+
+    New-Item -Path $Path -ItemType Directory -Force | Out-Null
 }
 
 function Write-StepProgress {
@@ -101,6 +117,36 @@ function Write-StepProgress {
     Write-Progress -Id $Id -Activity $Activity -Status $Status -PercentComplete $percentComplete
 }
 
+function Assert-GraphConnection {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $false)]
+        [string[]]$RequiredScopes = @()
+    )
+
+    $context = Get-MgContext
+    if (-not $context) {
+        throw "No active Microsoft Graph context found. Run Connect-MgGraph first or remove -SkipConnect."
+    }
+
+    if ($RequiredScopes -and $RequiredScopes.Count -gt 0) {
+        $grantedScopes = @($context.Scopes)
+        $missingScopes = @(
+            foreach ($scope in $RequiredScopes) {
+                if ($grantedScopes -inotcontains $scope) {
+                    $scope
+                }
+            }
+        )
+
+        if ($missingScopes.Count -gt 0) {
+            throw ("The active Microsoft Graph context is missing required scopes: {0}" -f ($missingScopes -join ", "))
+        }
+    }
+
+    return $context
+}
+
 function Write-LogEntry {
     [CmdletBinding()]
     param(
@@ -126,11 +172,11 @@ function Get-TeamsRoomLicenseDefinitions {
 
     return @(
         [PSCustomObject]@{
-            Sku  = "4cde982a-ede4-4409-9ae6b003453c8ea6"
+            Sku  = "4cde982a-ede4-4409-9ae6-b003453c8ea6"
             Name = "Microsoft Teams Rooms Pro"
         },
         [PSCustomObject]@{
-            Sku  = "295a8eb0-f78d045c708b5b01eed5ed02dff"
+            Sku  = "295a8eb0-f78d-45c7-8b5b-1eed5ed02dff"
             Name = "Microsoft Teams Shared Devices"
         }
     )
@@ -164,17 +210,42 @@ function Get-TargetLicenseLookup {
         }
 
         $token = ConvertTo-NormalizedSkuToken -SkuId ([string]$license.Sku)
-        if ([string]::IsNullOrWhiteSpace($token)) {
+        if ($token.Length -ne 32) {
             continue
         }
 
-        $lookup[$token] = [PSCustomObject]@{
-            Sku  = [string]$license.Sku
-            Name = [string]$license.Name
+        if (-not $lookup.ContainsKey($token)) {
+            $lookup[$token] = [PSCustomObject]@{
+                Sku  = [string]$license.Sku
+                Name = [string]$license.Name
+            }
         }
     }
 
+    if ($lookup.Count -eq 0) {
+        throw "No valid target license definitions were provided. Provide GUID-like SKU values."
+    }
+
     return $lookup
+}
+
+function ConvertTo-GraphGuidLiteral {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $false)]
+        [string]$SkuToken
+    )
+
+    if ([string]::IsNullOrWhiteSpace($SkuToken) -or $SkuToken.Length -ne 32) {
+        return ""
+    }
+
+    try {
+        return ([Guid]::ParseExact($SkuToken, "N")).ToString()
+    }
+    catch {
+        return ""
+    }
 }
 
 function Get-MatchingTargetLicensesForUser {
@@ -187,9 +258,9 @@ function Get-MatchingTargetLicensesForUser {
         [hashtable]$TargetLicenseLookup
     )
 
-    $matchedLicenses = @()
+    $matchedLicenses = [System.Collections.Generic.List[object]]::new()
     if (-not $User.assignedLicenses) {
-        return $matchedLicenses
+        return @()
     }
 
     foreach ($lic in $User.assignedLicenses) {
@@ -199,7 +270,7 @@ function Get-MatchingTargetLicensesForUser {
 
         $token = ConvertTo-NormalizedSkuToken -SkuId ([string]$lic.skuId)
         if ($TargetLicenseLookup.ContainsKey($token)) {
-            $matchedLicenses += $TargetLicenseLookup[$token]
+            [void]$matchedLicenses.Add($TargetLicenseLookup[$token])
         }
     }
 
@@ -225,34 +296,68 @@ function Get-UsersWithTargetLicenses {
     $licenses = @(
         foreach ($license in $LicenseDefinitions) {
             $token = ConvertTo-NormalizedSkuToken -SkuId ([string]$license.Sku)
-            if (-not [string]::IsNullOrWhiteSpace($token)) {
+            if ($token.Length -eq 32) {
                 $token
             }
         }
     ) | Sort-Object -Unique
 
-    $licenseSet = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
-    foreach ($licenseToken in $licenses) {
-        [void]$licenseSet.Add($licenseToken)
+    if ($licenses.Count -eq 0) {
+        throw "No valid target license tokens were provided."
     }
 
-    Write-Progress -Id $ProgressId -Activity $ProgressActivity -Status "Loading users with Get-MgUser" -PercentComplete -1
-    $users = Get-MgUser -All -Property $UserProperties
+    $licenseGuids = @(
+        foreach ($licenseToken in $licenses) {
+            $guidLiteral = ConvertTo-GraphGuidLiteral -SkuToken $licenseToken
+            if (-not [string]::IsNullOrWhiteSpace($guidLiteral)) {
+                $guidLiteral
+            }
+        }
+    ) | Sort-Object -Unique
 
-    Write-Progress -Id $ProgressId -Activity $ProgressActivity -Status "Filtering users by assigned license SKU" -PercentComplete -1
-    $matchedUsers = $users | Where-Object {
-        if (-not $_.AssignedLicenses -or $_.AssignedLicenses.Count -eq 0) {
-            return $false
+    if ($licenseGuids.Count -eq 0) {
+        throw "No valid GUID-formatted target license values were provided."
+    }
+
+    $filterClauses = @($licenseGuids | ForEach-Object { "assignedLicenses/any(x:x/skuId eq $_)" })
+    $filterQuery = $filterClauses -join " or "
+    $selectQuery = [System.Uri]::EscapeDataString(($UserProperties -join ","))
+    $escapedFilter = [System.Uri]::EscapeDataString($filterQuery)
+    $uri = "https://graph.microsoft.com/v1.0/users?`$count=true&`$select=$selectQuery&`$filter=$escapedFilter"
+    $headers = @{
+        ConsistencyLevel = "eventual"
+    }
+
+    try {
+        $matchedUsers = Get-GraphPagedResults -Uri $uri -ProgressId $ProgressId -ProgressActivity $ProgressActivity -Headers $headers
+    }
+    catch {
+        Write-Warning ("Server-side license filtering failed; falling back to client-side filtering. {0}" -f $_.Exception.Message)
+        $licenseSet = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+        foreach ($licenseToken in $licenses) {
+            [void]$licenseSet.Add($licenseToken)
         }
 
-        foreach ($assignedLicense in $_.AssignedLicenses) {
-            $assignedToken = ConvertTo-NormalizedSkuToken -SkuId ([string]$assignedLicense.SkuId)
-            if ($licenseSet.Contains($assignedToken)) {
-                return $true
+        Write-Progress -Id $ProgressId -Activity $ProgressActivity -Status "Loading users with Get-MgUser" -PercentComplete -1
+        $users = Get-MgUser -All -Property $UserProperties
+
+        Write-Progress -Id $ProgressId -Activity $ProgressActivity -Status "Filtering users by assigned license SKU" -PercentComplete -1
+        $filteredUsers = [System.Collections.Generic.List[object]]::new()
+        foreach ($user in @($users)) {
+            if (-not $user.AssignedLicenses -or $user.AssignedLicenses.Count -eq 0) {
+                continue
+            }
+
+            foreach ($assignedLicense in $user.AssignedLicenses) {
+                $assignedToken = ConvertTo-NormalizedSkuToken -SkuId ([string]$assignedLicense.SkuId)
+                if ($licenseSet.Contains($assignedToken)) {
+                    [void]$filteredUsers.Add($user)
+                    break
+                }
             }
         }
 
-        return $false
+        $matchedUsers = @($filteredUsers)
     }
 
     Write-Progress -Id $ProgressId -Activity $ProgressActivity -Completed
