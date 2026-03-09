@@ -3,10 +3,7 @@ param(
     [string]$OutputPath = "C:\Temp\TeamsRoomAccountInventory.csv",
 
     [Parameter(Mandatory = $false)]
-    [string[]]$TargetSkuPartNumbers = @(
-        "MICROSOFT_TEAMS_ROOMS_PRO",   # Alternate Teams Rooms Pro part number
-        "MCOCAP"                       # Alternate Teams Shared Device part number
-    ),
+    [array]$TargetLicenses = @(),
 
     [Parameter(Mandatory = $false)]
     [switch]$SkipConnect
@@ -38,27 +35,24 @@ else {
     Write-StepProgress -Id $mainProgressId -Activity $mainActivity -Status "Skipping Graph connection (-SkipConnect)" -CurrentStep 1 -TotalSteps $totalSteps
 }
 
-# Subscribed SKUs in the tenant for mapping SkuId -> SkuPartNumber
-Write-StepProgress -Id $mainProgressId -Activity $mainActivity -Status "Loading subscribed SKU map" -CurrentStep 2 -TotalSteps $totalSteps
-$subscribedSkusUri = "https://graph.microsoft.com/v1.0/subscribedSkus?`$select=skuId,skuPartNumber"
-$subscribedSkus = Get-GraphPagedResults -Uri $subscribedSkusUri -ProgressId 3 -ProgressActivity "Loading subscribed SKUs"
+Write-StepProgress -Id $mainProgressId -Activity $mainActivity -Status "Preparing static target licenses" -CurrentStep 2 -TotalSteps $totalSteps
+if (-not $TargetLicenses -or $TargetLicenses.Count -eq 0) {
+    $TargetLicenses = Get-TeamsRoomLicenseDefinitions
+}
 
-$skuIdToPartNumber = @{}
-foreach ($sku in $subscribedSkus) {
-    if ($sku.skuId) {
-        $skuIdToPartNumber[[string]$sku.skuId] = [string]$sku.skuPartNumber
+$invalidTargetSkus = @(
+    foreach ($license in $TargetLicenses) {
+        $token = ConvertTo-NormalizedSkuToken -SkuId ([string]$license.Sku)
+        if ($token.Length -ne 32) {
+            [string]$license.Sku
+        }
     }
+)
+if ($invalidTargetSkus.Count -gt 0) {
+    Write-Warning ("One or more target SKU values are not 32-character GUID tokens after normalization: {0}" -f ($invalidTargetSkus -join ", "))
 }
 
-$friendlyLicenseNames = @{
-    "MICROSOFT_TEAMS_ROOMS_PRO" = "Microsoft Teams Rooms Pro"
-    "MCOCAP"                    = "Microsoft Teams Shared Device"
-}
-
-$targetSkuLookup = @{}
-foreach ($part in $TargetSkuPartNumbers) {
-    $targetSkuLookup[$part.ToUpperInvariant()] = $true
-}
+$targetLicenseLookup = Get-TargetLicenseLookup -LicenseDefinitions $TargetLicenses
 
 # Use beta for signInActivity + lastNonInteractiveSignInDateTime
 Write-StepProgress -Id $mainProgressId -Activity $mainActivity -Status "Loading users from Microsoft Graph (beta)" -CurrentStep 3 -TotalSteps $totalSteps
@@ -76,40 +70,12 @@ for ($index = 0; $index -lt $totalUsers; $index++) {
     $userPercent = if ($totalUsers -gt 0) { [int](($currentUserNumber / $totalUsers) * 100) } else { 100 }
     Write-Progress -Id 2 -ParentId $mainProgressId -Activity "Processing users" -Status "User $currentUserNumber/$totalUsers - $userIdentifier" -PercentComplete $userPercent
 
-    $assignedPartNumbers = @()
-    if ($user.assignedLicenses) {
-        foreach ($lic in $user.assignedLicenses) {
-            if (-not $lic.skuId) { continue }
-            $skuId = [string]$lic.skuId
-            if ($skuIdToPartNumber.ContainsKey($skuId)) {
-                $assignedPartNumbers += $skuIdToPartNumber[$skuId]
-            }
-        }
-    }
-
-    $assignedPartNumbers = $assignedPartNumbers | Sort-Object -Unique
-
-    $matchedTargetParts = @(
-        foreach ($part in $assignedPartNumbers) {
-            if ($targetSkuLookup.ContainsKey($part.ToUpperInvariant())) {
-                $part
-            }
-        }
-    )
-
-    if (-not $matchedTargetParts -or $matchedTargetParts.Count -eq 0) {
+    $matchedLicenses = Get-MatchingTargetLicensesForUser -User $user -TargetLicenseLookup $targetLicenseLookup
+    if (-not $matchedLicenses -or $matchedLicenses.Count -eq 0) {
         continue
     }
 
-    $assignedLicenseNames = foreach ($part in $assignedPartNumbers) {
-        $partKey = $part.ToUpperInvariant()
-        if ($friendlyLicenseNames.ContainsKey($partKey)) {
-            $friendlyLicenseNames[$partKey]
-        }
-        else {
-            $part
-        }
-    }
+    $assignedLicenseNames = @($matchedLicenses | ForEach-Object { $_.Name } | Sort-Object -Unique)
 
     $ext = Get-UserExtensionAttributes -ExtensionObject $user.onPremisesExtensionAttributes
 

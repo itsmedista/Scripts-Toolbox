@@ -120,39 +120,76 @@ function Write-LogEntry {
     Add-Content -Path $LogPath -Value $line -Encoding UTF8
 }
 
-function Get-SkuIdToPartNumberMap {
+function Get-TeamsRoomLicenseDefinitions {
+    [CmdletBinding()]
+    param()
+
+    return @(
+        [PSCustomObject]@{
+            Sku  = "4cde982a-ede4-4409-9ae6b003453c8ea6"
+            Name = "Microsoft Teams Rooms Pro"
+        },
+        [PSCustomObject]@{
+            Sku  = "295a8eb0-f78d045c708b5b01eed5ed02dff"
+            Name = "Microsoft Teams Shared Devices"
+        }
+    )
+}
+
+function ConvertTo-NormalizedSkuToken {
     [CmdletBinding()]
     param(
         [Parameter(Mandatory = $false)]
-        [int]$ProgressId = 10
+        [string]$SkuId
     )
 
-    $subscribedSkusUri = "https://graph.microsoft.com/v1.0/subscribedSkus?`$select=skuId,skuPartNumber"
-    $subscribedSkus = Get-GraphPagedResults -Uri $subscribedSkusUri -ProgressId $ProgressId -ProgressActivity "Loading subscribed SKUs"
+    if ([string]::IsNullOrWhiteSpace($SkuId)) {
+        return ""
+    }
 
-    $skuIdToPartNumber = @{}
-    foreach ($sku in $subscribedSkus) {
-        if ($sku.skuId) {
-            $skuIdToPartNumber[[string]$sku.skuId] = [string]$sku.skuPartNumber
+    return (($SkuId.ToLowerInvariant()) -replace "[^a-f0-9]", "")
+}
+
+function Get-TargetLicenseLookup {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [array]$LicenseDefinitions
+    )
+
+    $lookup = @{}
+    foreach ($license in $LicenseDefinitions) {
+        if (-not $license.Sku) {
+            continue
+        }
+
+        $token = ConvertTo-NormalizedSkuToken -SkuId ([string]$license.Sku)
+        if ([string]::IsNullOrWhiteSpace($token)) {
+            continue
+        }
+
+        $lookup[$token] = [PSCustomObject]@{
+            Sku  = [string]$license.Sku
+            Name = [string]$license.Name
         }
     }
 
-    return $skuIdToPartNumber
+    return $lookup
 }
 
-function Get-AssignedSkuPartNumbersForUser {
+function Get-MatchingTargetLicensesForUser {
     [CmdletBinding()]
     param(
         [Parameter(Mandatory = $true)]
         $User,
 
         [Parameter(Mandatory = $true)]
-        [hashtable]$SkuIdToPartNumberMap
+        [hashtable]$TargetLicenseLookup
     )
 
-    $assignedPartNumbers = @()
+    $matchedLicenses = @()
     if (-not $User.assignedLicenses) {
-        return $assignedPartNumbers
+        return $matchedLicenses
     }
 
     foreach ($lic in $User.assignedLicenses) {
@@ -160,13 +197,13 @@ function Get-AssignedSkuPartNumbersForUser {
             continue
         }
 
-        $skuId = [string]$lic.skuId
-        if ($SkuIdToPartNumberMap.ContainsKey($skuId)) {
-            $assignedPartNumbers += $SkuIdToPartNumberMap[$skuId]
+        $token = ConvertTo-NormalizedSkuToken -SkuId ([string]$lic.skuId)
+        if ($TargetLicenseLookup.ContainsKey($token)) {
+            $matchedLicenses += $TargetLicenseLookup[$token]
         }
     }
 
-    return ($assignedPartNumbers | Sort-Object -Unique)
+    return @($matchedLicenses | Sort-Object -Property Sku -Unique)
 }
 
 function ConvertTo-PasswordPolicyList {

@@ -1,3 +1,4 @@
+
 # Teams Rooms Scripts Guide
 
 ## Purpose
@@ -22,18 +23,22 @@ Reusable functions used by multiple scripts:
 - `Ensure-Directory`: Creates output/log directory if missing.
 - `Write-StepProgress`: Consistent main step progress bar.
 - `Write-LogEntry`: Writes timestamped log entries.
-- `Get-SkuIdToPartNumberMap`: Maps SKU GUIDs to SKU part numbers.
-- `Get-AssignedSkuPartNumbersForUser`: Resolves assigned user SKUs.
+- `Get-TeamsRoomLicenseDefinitions`: Returns static Teams Rooms license objects.
+- `ConvertTo-NormalizedSkuToken`: Normalizes license IDs for matching.
+- `Get-TargetLicenseLookup`: Builds lookup map from static license objects.
+- `Get-MatchingTargetLicensesForUser`: Resolves matched target licenses for a user.
 - `ConvertTo-PasswordPolicyList`: Normalizes `passwordPolicies` text.
 - `Get-UpdatedPasswordPolicies`: Adds `DisablePasswordExpiration` if missing.
 
 ## Inventory Script
 ### `Get-TeamsRoomAccountInventory.ps1`
-Builds a CSV inventory for room accounts that have one or more target SKUs.
+Builds a CSV inventory for room accounts that have one or more target licenses.
 
-Default target SKUs:
-- `MICROSOFT_TEAMS_ROOMS_PRO`
-- `MCOCAP`
+Default target licenses:
+- `Microsoft Teams Rooms Pro`
+  - SKU: `4cde982a-ede4-4409-9ae6b003453c8ea6`
+- `Microsoft Teams Shared Devices`
+  - SKU: `295a8eb0-f78d045c708b5b01eed5ed02dff`
 
 Output fields:
 - AccountName
@@ -58,16 +63,19 @@ Custom output path:
 
 ## Password Remediation Script
 ### `Set-RoomAccountPasswordNeverExpires.ps1`
-Finds room accounts with target SKUs and ensures password policy includes:
+Finds room accounts with target licenses and ensures password policy includes:
 - `DisablePasswordExpiration`
 
-Default target SKUs:
-- `MICROSOFT_TEAMS_ROOMS_PRO`
-- `MCOCAP`
+Default target licenses:
+- `Microsoft Teams Rooms Pro`
+  - SKU: `4cde982a-ede4-4409-9ae6b003453c8ea6`
+- `Microsoft Teams Shared Devices`
+  - SKU: `295a8eb0-f78d045c708b5b01eed5ed02dff`
 
 Behavior:
 - Reads users and assigned licenses from Graph.
-- Filters users matching the target SKUs.
+- Uses static target license objects (no `subscribedSkus` query).
+- Filters users matching the target licenses.
 - Checks `passwordPolicies`.
 - If needed, patches the user to add `DisablePasswordExpiration`.
 - Logs all actions to a log file.
@@ -103,5 +111,5 @@ Custom log path:
 
 ## Operational Notes
 - Use `-WhatIf` first on remediation script to validate intended changes.
-- Verify your tenant’s exact SKU part numbers and pass `-TargetSkuPartNumbers` if needed.
+- Override the defaults with `-TargetLicenses` if you need a different license set.
 - Keep `Common-Functions.ps1` in the same folder as the scripts.

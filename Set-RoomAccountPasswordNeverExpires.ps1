@@ -4,10 +4,7 @@ param(
     [string]$LogPath = ("C:\Temp\Set-RoomAccountPasswordNeverExpires_{0}.log" -f (Get-Date -Format "yyyyMMdd_HHmmss")),
 
     [Parameter(Mandatory = $false)]
-    [string[]]$TargetSkuPartNumbers = @(
-        "MICROSOFT_TEAMS_ROOMS_PRO",
-        "MCOCAP"
-    ),
+    [array]$TargetLicenses = @(),
 
     [Parameter(Mandatory = $false)]
     [switch]$SkipConnect
@@ -31,7 +28,10 @@ $mainActivity = "Room account password expiration remediation"
 $totalSteps = 5
 
 Write-LogEntry -LogPath $LogPath -Message "Script started."
-Write-LogEntry -LogPath $LogPath -Message ("Target SKUs: {0}" -f ($TargetSkuPartNumbers -join ", "))
+if (-not $TargetLicenses -or $TargetLicenses.Count -eq 0) {
+    $TargetLicenses = Get-TeamsRoomLicenseDefinitions
+}
+Write-LogEntry -LogPath $LogPath -Message ("Target licenses: {0}" -f (($TargetLicenses | ForEach-Object { "{0} [{1}]" -f $_.Name, $_.Sku }) -join "; "))
 
 if (-not $SkipConnect) {
     Write-StepProgress -Id $mainProgressId -Activity $mainActivity -Status "Connecting to Microsoft Graph" -CurrentStep 1 -TotalSteps $totalSteps
@@ -48,9 +48,21 @@ else {
     Write-LogEntry -LogPath $LogPath -Message "Skipped Graph connection due to -SkipConnect." -Level "WARN"
 }
 
-Write-StepProgress -Id $mainProgressId -Activity $mainActivity -Status "Loading subscribed SKU mapping" -CurrentStep 2 -TotalSteps $totalSteps
-$skuIdToPartNumber = Get-SkuIdToPartNumberMap -ProgressId 3
-Write-LogEntry -LogPath $LogPath -Message ("Loaded {0} subscribed SKUs." -f $skuIdToPartNumber.Count)
+Write-StepProgress -Id $mainProgressId -Activity $mainActivity -Status "Preparing static target licenses" -CurrentStep 2 -TotalSteps $totalSteps
+$targetLicenseLookup = Get-TargetLicenseLookup -LicenseDefinitions $TargetLicenses
+$invalidTargetSkus = @(
+    foreach ($license in $TargetLicenses) {
+        $token = ConvertTo-NormalizedSkuToken -SkuId ([string]$license.Sku)
+        if ($token.Length -ne 32) {
+            [string]$license.Sku
+        }
+    }
+)
+if ($invalidTargetSkus.Count -gt 0) {
+    $message = ("One or more target SKU values are not 32-character GUID tokens after normalization: {0}" -f ($invalidTargetSkus -join ", "))
+    Write-Warning $message
+    Write-LogEntry -LogPath $LogPath -Message $message -Level "WARN"
+}
 
 Write-StepProgress -Id $mainProgressId -Activity $mainActivity -Status "Loading users" -CurrentStep 3 -TotalSteps $totalSteps
 $usersUri = "https://graph.microsoft.com/v1.0/users?`$select=id,displayName,userPrincipalName,passwordPolicies,assignedLicenses&`$top=999"
@@ -58,33 +70,16 @@ $allUsers = Get-GraphPagedResults -Uri $usersUri -ProgressId 4 -ProgressActivity
 Write-LogEntry -LogPath $LogPath -Message ("Loaded {0} users from Graph." -f $allUsers.Count)
 
 Write-StepProgress -Id $mainProgressId -Activity $mainActivity -Status "Filtering room accounts by target SKUs" -CurrentStep 4 -TotalSteps $totalSteps
-$targetSkuLookup = @{}
-foreach ($part in $TargetSkuPartNumbers) {
-    $targetSkuLookup[$part.ToUpperInvariant()] = $true
-}
-
 $licensedRoomUsers = @()
 foreach ($user in $allUsers) {
-    $assignedPartNumbers = Get-AssignedSkuPartNumbersForUser -User $user -SkuIdToPartNumberMap $skuIdToPartNumber
-    if (-not $assignedPartNumbers -or $assignedPartNumbers.Count -eq 0) {
-        continue
-    }
-
-    $matchedSkuPartNumbers = @(
-        foreach ($part in $assignedPartNumbers) {
-            if ($targetSkuLookup.ContainsKey($part.ToUpperInvariant())) {
-                $part
-            }
-        }
-    )
-
-    if (-not $matchedSkuPartNumbers -or $matchedSkuPartNumbers.Count -eq 0) {
+    $matchedLicenses = Get-MatchingTargetLicensesForUser -User $user -TargetLicenseLookup $targetLicenseLookup
+    if (-not $matchedLicenses -or $matchedLicenses.Count -eq 0) {
         continue
     }
 
     $licensedRoomUsers += [PSCustomObject]@{
-        User                  = $user
-        MatchedSkuPartNumbers = ($matchedSkuPartNumbers | Sort-Object -Unique)
+        User            = $user
+        MatchedLicenses = $matchedLicenses
     }
 }
 
@@ -113,14 +108,16 @@ for ($index = 0; $index -lt $totalTargets; $index++) {
 
     if ($evaluation.AlreadyCompliant) {
         $alreadyCompliantCount++
-        Write-LogEntry -LogPath $LogPath -Message ("Compliant: {0} ({1}) already has DisablePasswordExpiration. SKUs: {2}" -f $displayName, $upn, ($entry.MatchedSkuPartNumbers -join ", "))
+        $matchedSkuLog = ($entry.MatchedLicenses | ForEach-Object { "{0} [{1}]" -f $_.Name, $_.Sku }) -join "; "
+        Write-LogEntry -LogPath $LogPath -Message ("Compliant: {0} ({1}) already has DisablePasswordExpiration. Licenses: {2}" -f $displayName, $upn, $matchedSkuLog)
         continue
     }
 
     $actionDescription = "Set password policy to never expire. New passwordPolicies value: $($evaluation.UpdatedValue)"
     if (-not $PSCmdlet.ShouldProcess($upn, $actionDescription)) {
         $simulatedCount++
-        Write-LogEntry -LogPath $LogPath -Message ("WhatIf: Would update {0} ({1}) to '{2}'. SKUs: {3}" -f $displayName, $upn, $evaluation.UpdatedValue, ($entry.MatchedSkuPartNumbers -join ", "))
+        $matchedSkuLog = ($entry.MatchedLicenses | ForEach-Object { "{0} [{1}]" -f $_.Name, $_.Sku }) -join "; "
+        Write-LogEntry -LogPath $LogPath -Message ("WhatIf: Would update {0} ({1}) to '{2}'. Licenses: {3}" -f $displayName, $upn, $evaluation.UpdatedValue, $matchedSkuLog)
         continue
     }
 
@@ -132,7 +129,8 @@ for ($index = 0; $index -lt $totalTargets; $index++) {
 
         Invoke-MgGraphRequest -Method PATCH -Uri $patchUri -Body $body -ContentType "application/json"
         $updatedCount++
-        Write-LogEntry -LogPath $LogPath -Message ("Updated: {0} ({1}) passwordPolicies changed to '{2}'. SKUs: {3}" -f $displayName, $upn, $evaluation.UpdatedValue, ($entry.MatchedSkuPartNumbers -join ", "))
+        $matchedSkuLog = ($entry.MatchedLicenses | ForEach-Object { "{0} [{1}]" -f $_.Name, $_.Sku }) -join "; "
+        Write-LogEntry -LogPath $LogPath -Message ("Updated: {0} ({1}) passwordPolicies changed to '{2}'. Licenses: {3}" -f $displayName, $upn, $evaluation.UpdatedValue, $matchedSkuLog)
     }
     catch {
         $failedCount++
