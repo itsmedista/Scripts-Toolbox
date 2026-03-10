@@ -15,19 +15,27 @@ This folder contains PowerShell scripts to inventory Teams room accounts and enf
   - `Install-Module Microsoft.Graph -Scope CurrentUser`
 - Permissions to read and update users in Microsoft Entra ID
 
+## Default Target Licenses
+- `Microsoft Teams Rooms Pro`
+  - SKU: `4cde982a-ede4-4409-9ae6-b003453c8ea6`
+- `Microsoft Teams Shared Devices`
+  - SKU: `295a8eb0-f78d-45c7-8b5b-1eed5ed02dff`
+
 ## Shared Helper File
 ### `Common-Functions.ps1`
 Reusable functions used by multiple scripts:
-- `Get-GraphPagedResults`: Handles Microsoft Graph paging.
+- `Get-GraphPagedResults`: Handles Microsoft Graph paging and supports optional request headers.
 - `Get-UserExtensionAttributes`: Flattens extension attributes 1-15.
-- `Ensure-Directory`: Creates output/log directory if missing.
+- `Ensure-Directory`: Creates output/log directory if missing, and validates that an existing path is a directory.
 - `Write-StepProgress`: Consistent main step progress bar.
+- `Assert-GraphConnection`: Validates an existing Graph session and required scopes (used with `-SkipConnect`).
 - `Write-LogEntry`: Writes timestamped log entries.
 - `Get-TeamsRoomLicenseDefinitions`: Returns static Teams Rooms license objects.
 - `ConvertTo-NormalizedSkuToken`: Normalizes license IDs for matching.
-- `Get-TargetLicenseLookup`: Builds lookup map from static license objects.
+- `Get-TargetLicenseLookup`: Builds lookup map from static license objects and validates target SKUs.
+- `ConvertTo-GraphGuidLiteral`: Converts a normalized SKU token into Graph GUID format.
 - `Get-MatchingTargetLicensesForUser`: Resolves matched target licenses for a user.
-- `Get-UsersWithTargetLicenses`: Uses `Get-MgUser -Property` and `Where-Object` to return users whose `AssignedLicenses.SkuId` matches target licenses.
+- `Get-UsersWithTargetLicenses`: Uses server-side Graph filtering (`assignedLicenses/any(...)`) first, then falls back to client-side filtering with `Get-MgUser` if needed.
 - `ConvertTo-PasswordPolicyList`: Normalizes `passwordPolicies` text.
 - `Get-UpdatedPasswordPolicies`: Adds `DisablePasswordExpiration` if missing.
 
@@ -35,22 +43,23 @@ Reusable functions used by multiple scripts:
 ### `Get-TeamsRoomAccountInventory.ps1`
 Builds a CSV inventory for room accounts that have one or more target licenses.
 
-Default target licenses:
-- `Microsoft Teams Rooms Pro`
-  - SKU: `4cde982a-ede4-4409-9ae6b003453c8ea6`
-- `Microsoft Teams Shared Devices`
-  - SKU: `295a8eb0-f78d045c708b5b01eed5ed02dff`
+Parameters:
+- `-OutputPath` (default: `C:\Temp\TeamsRoomAccountInventory.csv`)
+- `-TargetLicenses` (optional override array of `{ Name, Sku }`)
+- `-SkipConnect` (uses existing Graph context and validates required scopes)
 
 Output fields:
-- AccountName
-- UPN
-- LastNonInteractiveSignInDateTime
-- AssignedLicenseName
-- PasswordPolicies
-- ExtensionAttribute1 through ExtensionAttribute15
+- `AccountName`
+- `UPN`
+- `LastNonInteractiveSignInDateTime`
+- `AssignedLicenseName`
+- `PasswordPolicies`
+- `ExtensionAttribute1` through `ExtensionAttribute15`
 
-Default output path:
-- `C:\Temp\TeamsRoomAccountInventory.csv`
+The script returns a summary object to the pipeline after export:
+- `OutputPath`
+- `RowsExported`
+- `GeneratedAt`
 
 Example usage:
 ```powershell
@@ -62,21 +71,20 @@ Custom output path:
 .\Get-TeamsRoomAccountInventory.ps1 -OutputPath "C:\Temp\MyRoomInventory.csv"
 ```
 
+Use existing Graph connection:
+```powershell
+Connect-MgGraph -Scopes "User.Read.All","Directory.Read.All","AuditLog.Read.All"
+.\Get-TeamsRoomAccountInventory.ps1 -SkipConnect
+```
+
 ## Password Remediation Script
 ### `Set-RoomAccountPasswordNeverExpires.ps1`
-Finds room accounts with target licenses and ensures password policy includes:
-- `DisablePasswordExpiration`
-
-Default target licenses:
-- `Microsoft Teams Rooms Pro`
-  - SKU: `4cde982a-ede4-4409-9ae6b003453c8ea6`
-- `Microsoft Teams Shared Devices`
-  - SKU: `295a8eb0-f78d045c708b5b01eed5ed02dff`
+Finds room accounts with target licenses and ensures password policy includes `DisablePasswordExpiration`.
 
 Behavior:
-- Reads users and assigned licenses from Graph with `Get-MgUser -Property`.
 - Uses static target license objects (no `subscribedSkus` query).
-- Filters users with `Where-Object` where `AssignedLicenses.SkuId` matches one of the target license SKUs.
+- Resolves target users through helper logic that attempts server-side Graph license filtering first.
+- Falls back to client-side filtering if server-side filtering is unavailable.
 - Checks `passwordPolicies`.
 - If needed, patches the user to add `DisablePasswordExpiration`.
 - Logs all actions to a log file.
@@ -101,16 +109,17 @@ Custom log path:
 ```
 
 ## Graph Permission Notes
-- Inventory script connects with:
+- Inventory script requires:
   - `User.Read.All`
   - `Directory.Read.All`
   - `AuditLog.Read.All`
-- Remediation script connects with:
+- Remediation script requires:
   - `User.Read.All`
   - `User.ReadWrite.All`
   - `Directory.Read.All`
+- When using `-SkipConnect`, the current Graph session must already include the required scopes.
 
 ## Operational Notes
 - Use `-WhatIf` first on remediation script to validate intended changes.
-- Override the defaults with `-TargetLicenses` if you need a different license set.
+- Override defaults with `-TargetLicenses` if you need a different license set.
 - Keep `Common-Functions.ps1` in the same folder as the scripts.
