@@ -1,19 +1,24 @@
 
-# Teams Rooms Scripts Guide
+# Teams Rooms and Intune Remediation Scripts Guide
 
 ## Purpose
-This folder contains PowerShell scripts to inventory Teams room accounts and enforce password never-expire policy for specific room-license SKUs.
+This folder contains:
+- Teams Rooms scripts to inventory room accounts and enforce password never-expire policy for specific room-license SKUs.
+- Intune Proactive Remediation scripts to detect and remediate devices where Remote Desktop is turned off.
 
 ## Files
 - `Common-Functions.ps1`
 - `Get-TeamsRoomAccountInventory.ps1`
 - `Set-RoomAccountPasswordNeverExpires.ps1`
+- `Detect-RemoteDesktopDisabled.ps1`
+- `Remediate-EnableRemoteDesktop.ps1`
 
 ## Prerequisites
 - PowerShell 5.1+ (or PowerShell 7+)
 - Microsoft Graph PowerShell SDK installed
   - `Install-Module Microsoft.Graph -Scope CurrentUser`
 - Permissions to read and update users in Microsoft Entra ID
+- For Intune remediation scripts: run in Intune Management Extension context (typically `SYSTEM`) with local admin rights on target devices.
 
 ## Default Target Licenses
 - `Microsoft Teams Rooms Pro`
@@ -108,6 +113,31 @@ Custom log path:
 .\Set-RoomAccountPasswordNeverExpires.ps1 -LogPath "C:\Temp\RoomPasswordPolicyFix.log"
 ```
 
+## Intune Proactive Remediation (Remote Desktop)
+### Detection Script: `Detect-RemoteDesktopDisabled.ps1`
+Detects non-compliant devices when either of these is true:
+- `HKLM:\System\CurrentControlSet\Control\Terminal Server\fDenyTSConnections` is not `0`
+- No enabled firewall rules exist in display group `Remote Desktop`
+
+Exit behavior:
+- `0`: Compliant
+- `1`: Non-compliant (triggers remediation in Intune)
+
+### Remediation Script: `Remediate-EnableRemoteDesktop.ps1`
+Remediates non-compliant devices by:
+- Setting `fDenyTSConnections` to `0`
+- Enabling firewall rules in display group `Remote Desktop`
+- Re-checking compliance after changes
+
+Exit behavior:
+- `0`: Remediation successful / compliant
+- `1`: Remediation failed or still non-compliant
+
+Recommended Intune assignment settings:
+- Run this script using the logged-on credentials: `No`
+- Enforce script signature check: `No` (unless you sign scripts)
+- Run script in 64-bit PowerShell: `Yes`
+
 ## Graph Permission Notes
 - Inventory script requires:
   - `User.Read.All`
@@ -123,3 +153,4 @@ Custom log path:
 - Use `-WhatIf` first on remediation script to validate intended changes.
 - Override defaults with `-TargetLicenses` if you need a different license set.
 - Keep `Common-Functions.ps1` in the same folder as the scripts.
+- For Intune Proactive Remediation, upload `Detect-RemoteDesktopDisabled.ps1` as Detection and `Remediate-EnableRemoteDesktop.ps1` as Remediation.
