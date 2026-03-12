@@ -5,6 +5,7 @@
 This folder contains:
 - Teams Rooms scripts to inventory room accounts and enforce password never-expire policy for specific room-license SKUs.
 - Intune Proactive Remediation scripts to detect and remediate devices where Remote Desktop is turned off.
+- Intune Proactive Remediation scripts to detect and remediate devices where USB selective suspend is enabled.
 
 ## Files
 - `Common-Functions.ps1`
@@ -12,6 +13,8 @@ This folder contains:
 - `Set-RoomAccountPasswordNeverExpires.ps1`
 - `Detect-RemoteDesktopDisabled.ps1`
 - `Remediate-EnableRemoteDesktop.ps1`
+- `IntuneRemediation Scripts\USBSelectiveSuspend\Detect-UsbSelectiveSuspendEnabled.ps1`
+- `IntuneRemediation Scripts\USBSelectiveSuspend\Remediate-DisableUsbSelectiveSuspend.ps1`
 
 ## Prerequisites
 - PowerShell 5.1+ (or PowerShell 7+)
@@ -138,6 +141,29 @@ Recommended Intune assignment settings:
 - Enforce script signature check: `No` (unless you sign scripts)
 - Run script in 64-bit PowerShell: `Yes`
 
+## Intune Proactive Remediation (USB Selective Suspend)
+### Detection Script: `Detect-UsbSelectiveSuspendEnabled.ps1`
+Detects non-compliant devices when either of these is true for the active power plan:
+- `ACSettingIndex` for USB selective suspend is not `0`
+- `DCSettingIndex` for USB selective suspend is not `0`
+
+Registry path checked:
+- `HKLM:\SYSTEM\CurrentControlSet\Control\Power\User\PowerSchemes\<ActiveSchemeGuid>\2a737441-1930-4402-8d77-b2bebba308a3\48e6b7a6-50f5-4782-a5d4-53bb8f07e226`
+
+Exit behavior:
+- `0`: Compliant
+- `1`: Non-compliant (triggers remediation in Intune)
+
+### Remediation Script: `Remediate-DisableUsbSelectiveSuspend.ps1`
+Remediates non-compliant devices by:
+- Setting USB selective suspend to `0` for both AC and DC on the active power plan via `powercfg`
+- Re-applying the active plan
+- Re-checking compliance after changes
+
+Exit behavior:
+- `0`: Remediation successful / compliant
+- `1`: Remediation failed or still non-compliant
+
 ## Graph Permission Notes
 - Inventory script requires:
   - `User.Read.All`
@@ -154,3 +180,4 @@ Recommended Intune assignment settings:
 - Override defaults with `-TargetLicenses` if you need a different license set.
 - Keep `Common-Functions.ps1` in the same folder as the scripts.
 - For Intune Proactive Remediation, upload `Detect-RemoteDesktopDisabled.ps1` as Detection and `Remediate-EnableRemoteDesktop.ps1` as Remediation.
+- For Intune Proactive Remediation, upload `Detect-UsbSelectiveSuspendEnabled.ps1` as Detection and `Remediate-DisableUsbSelectiveSuspend.ps1` as Remediation.
