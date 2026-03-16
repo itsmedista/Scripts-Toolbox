@@ -1,13 +1,15 @@
 
-# Teams Rooms and Intune Remediation Scripts Guide
+# Scripts Toolbox
 
 ## Purpose
 This folder contains:
+- SCCM Migration Audit script to export Applications, Packages, Task Sequences, and Configuration Baselines to an HTML report.
 - Teams Rooms scripts to inventory room accounts and enforce password never-expire policy for specific room-license SKUs.
 - Intune Proactive Remediation scripts to detect and remediate devices where Remote Desktop is turned off.
 - Intune Proactive Remediation scripts to detect and remediate devices where USB selective suspend is enabled.
 
 ## Files
+- `Sccm_Migration_Audit.ps1`
 - `Common-Functions.ps1`
 - `Get-TeamsRoomAccountInventory.ps1`
 - `Set-RoomAccountPasswordNeverExpires.ps1`
@@ -17,6 +19,47 @@ This folder contains:
 - `IntuneRemediation Scripts\USBSelectiveSuspend\Remediate-DisableUsbSelectiveSuspend.ps1`
 - `IntuneRemediation Scripts\DisableUSBPowerDrainage\Detect-UsbPowerDrainWakeArmed.ps1`
 - `IntuneRemediation Scripts\DisableUSBPowerDrainage\Remediate-DisableUsbPowerDrainWake.ps1`
+
+---
+
+## SCCM Migration Audit
+### `Sccm_Migration_Audit.ps1`
+Connects to an SCCM site server and exports all Applications, Packages, Task Sequences, and Configuration Baselines to a self-contained, tabbed HTML report.
+
+> **Prerequisite:** Must be run from a machine with the SCCM console installed. The script imports the `ConfigurationManager` module from `$env:SMS_ADMIN_UI_PATH`.
+
+Parameters:
+- `-SiteServer` *(Mandatory)*: FQDN or hostname of the SCCM Site Server
+- `-SiteCode` *(Mandatory)*: 3-character SCCM Site Code (e.g. `PS1`)
+- `-OutputPath` (default: `$env:USERPROFILE\Desktop`): Folder where the HTML report is saved
+
+Report filename pattern: `SCCM_Audit_<yyyy-MM-dd_HHmm>.html`
+
+Report sections:
+- **Applications** — Display name, manufacturer, version, deployment type count, deployment and enabled state, creator, last modifier, description
+- **Packages** — Name, manufacturer, version, language, package type, source path, content flag, package ID, creation and last-refresh dates
+- **Task Sequences** — Name, package ID, enabled state, boot image, category, description, deployment count
+- **Configuration Baselines** — Display name, assigned/enabled/deployed state, unique ID, deployment count, creator, last modifier, dates
+
+Report features:
+- Summary cards showing item counts per category and a total
+- Tab navigation between sections
+- Per-section live filter/search input
+- The report opens automatically in the default browser after generation
+
+Example usage:
+```powershell
+.\Sccm_Migration_Audit.ps1 -SiteServer "SCCM01.contoso.com" -SiteCode "PS1"
+```
+
+Custom output path:
+```powershell
+.\Sccm_Migration_Audit.ps1 -SiteServer "SCCM01.contoso.com" -SiteCode "PS1" -OutputPath "C:\AuditReports"
+```
+
+---
+
+## Teams Rooms and Intune Remediation Scripts
 
 ## Prerequisites
 - PowerShell 5.1+ (or PowerShell 7+)
@@ -232,6 +275,10 @@ Exit behavior:
 - For Intune Proactive Remediation (USB Power Drain), upload `DisableUSBPowerDrainage\Detect-UsbPowerDrainWakeArmed.ps1` as Detection and `DisableUSBPowerDrainage\Remediate-DisableUsbPowerDrainWake.ps1` as Remediation.
 
 ## Changelog
+
+### 2026-03-16
+**Sccm_Migration_Audit.ps1** *(new)*
+- Added SCCM Migration Audit script. Connects to an SCCM site server and exports Applications, Packages, Task Sequences, and Configuration Baselines to a self-contained HTML report with tabbed navigation, summary cards, and per-section live filtering.
 
 ### 2026-03-15
 **Common-Functions.ps1**
