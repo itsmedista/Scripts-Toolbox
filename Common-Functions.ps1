@@ -20,15 +20,35 @@ function Get-GraphPagedResults {
     $nextLink = $Uri
     $page = 0
 
+    $maxRetries = 3
+    $baseRetryDelaySec = 5
+
     while ($nextLink) {
         $page++
         Write-Progress -Id $ProgressId -Activity $ProgressActivity -Status "Retrieving page $page" -PercentComplete -1
 
-        $response = if ($Headers.Count -gt 0) {
-            Invoke-MgGraphRequest -Method GET -Uri $nextLink -Headers $Headers
-        }
-        else {
-            Invoke-MgGraphRequest -Method GET -Uri $nextLink
+        $response = $null
+        for ($attempt = 1; $attempt -le $maxRetries; $attempt++) {
+            try {
+                $response = if ($Headers.Count -gt 0) {
+                    Invoke-MgGraphRequest -Method GET -Uri $nextLink -Headers $Headers
+                }
+                else {
+                    Invoke-MgGraphRequest -Method GET -Uri $nextLink
+                }
+                break
+            }
+            catch {
+                if ($attempt -eq $maxRetries) { throw }
+                $waitSeconds = $baseRetryDelaySec * $attempt
+                # Respect Retry-After header if present (Graph throttling returns HTTP 429)
+                $retryAfter = $_.Exception.Response.Headers['Retry-After']
+                if ($retryAfter -and [int]::TryParse($retryAfter, [ref]$null)) {
+                    $waitSeconds = [int]$retryAfter
+                }
+                Write-Warning ("Graph request failed (attempt $attempt/$maxRetries), retrying in ${waitSeconds}s: {0}" -f $_.Exception.Message)
+                Start-Sleep -Seconds $waitSeconds
+            }
         }
 
         if ($response.value) {

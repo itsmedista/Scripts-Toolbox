@@ -4,6 +4,11 @@ param()
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
+if (-not ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltinRole]::Administrator)) {
+    Write-Output "Remediation failed: Script requires elevation (run as Administrator or SYSTEM)."
+    exit 1
+}
+
 function Invoke-PowerCfgQuery {
     [CmdletBinding()]
     param(
@@ -29,16 +34,20 @@ function Get-UsbWakeArmedDevices {
     $wakeArmedDevices = Invoke-PowerCfgQuery -Arguments @('/DEVICEQUERY', 'WAKE_ARMED') -Action 'querying wake-armed devices'
     $usbDevices = [System.Collections.Generic.List[string]]::new()
 
+    # USB-related device classes: USB controllers, USB hubs, and composite USB devices
+    $usbClasses = @('USB', 'USBHub', 'USBDevice')
+
     foreach ($deviceName in $wakeArmedDevices) {
         $matchingDevices = @(Get-PnpDevice -FriendlyName $deviceName -ErrorAction SilentlyContinue)
 
         if ($matchingDevices.Count -gt 0) {
-            if (($matchingDevices | Where-Object { $_.Class -eq 'USB' }).Count -gt 0) {
+            if (($matchingDevices | Where-Object { $_.Class -in $usbClasses }).Count -gt 0) {
                 [void]$usbDevices.Add($deviceName)
             }
         } else {
-            # Device not found via PnP (no result or suppressed error) - fall back to name check
-            if ($deviceName -match '\bUSB\b') {
+            # PnP lookup returned nothing (driver not loaded, suppressed error, etc.) — fall back to
+            # name-based heuristic. Require "USB" as a standalone word to reduce false positives.
+            if ($deviceName -match '(?i)\bUSB\b') {
                 [void]$usbDevices.Add($deviceName)
             }
         }

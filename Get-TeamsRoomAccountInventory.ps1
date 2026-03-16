@@ -28,6 +28,9 @@ $requiredScopes = @(
     "AuditLog.Read.All"
 )
 
+$outputDirectory = Split-Path -Path $OutputPath -Parent
+Ensure-Directory -Path $outputDirectory
+
 if (-not $SkipConnect) {
     Write-StepProgress -Id $mainProgressId -Activity $mainActivity -Status "Connecting to Microsoft Graph" -CurrentStep 1 -TotalSteps $totalSteps
     Connect-MgGraph -Scopes $requiredScopes -NoWelcome
@@ -112,9 +115,6 @@ for ($index = 0; $index -lt $totalUsers; $index++) {
     })
 }
 Write-Progress -Id 2 -Activity "Processing users" -Completed
-
-$outputDirectory = Split-Path -Path $OutputPath -Parent
-Ensure-Directory -Path $outputDirectory
 
 Write-StepProgress -Id $mainProgressId -Activity $mainActivity -Status "Exporting CSV to $OutputPath" -CurrentStep 5 -TotalSteps $totalSteps
 $outputRows |

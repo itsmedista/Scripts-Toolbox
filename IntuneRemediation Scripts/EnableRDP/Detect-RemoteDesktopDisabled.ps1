@@ -18,17 +18,30 @@ catch {
 
 try {
     $firewallRules = @(Get-NetFirewallRule -DisplayGroup "Remote Desktop" -ErrorAction Stop)
-    $enabledRules = @($firewallRules | Where-Object { $_.Enabled -eq "True" })
-    if ($enabledRules.Count -eq 0) {
-        [void]$issues.Add("Remote Desktop firewall rules are not enabled.")
+    $enabledInboundRules = @($firewallRules | Where-Object { $_.Enabled -eq "True" -and $_.Direction -eq "Inbound" })
+    if ($enabledInboundRules.Count -eq 0) {
+        [void]$issues.Add("No enabled inbound Remote Desktop firewall rules found.")
     }
 }
 catch {
     [void]$issues.Add("Unable to validate Remote Desktop firewall rules: $($_.Exception.Message)")
 }
 
+try {
+    $svc = Get-Service -Name 'TermService' -ErrorAction Stop
+    if ($svc.StartType -eq 'Disabled') {
+        [void]$issues.Add("Remote Desktop service (TermService) is disabled.")
+    }
+    elseif ($svc.Status -ne 'Running') {
+        [void]$issues.Add("Remote Desktop service (TermService) is not running (Status=$($svc.Status)).")
+    }
+}
+catch {
+    [void]$issues.Add("Unable to check Remote Desktop service: $($_.Exception.Message)")
+}
+
 if ($issues.Count -eq 0) {
-    Write-Output "Compliant: Remote Desktop is enabled and firewall rules are active."
+    Write-Output "Compliant: Remote Desktop is enabled, firewall rules are active, and TermService is running."
     exit 0
 }
 

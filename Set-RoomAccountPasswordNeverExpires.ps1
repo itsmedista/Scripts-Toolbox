@@ -20,8 +20,13 @@ if (-not (Test-Path -LiteralPath $helperPath)) {
 . $helperPath
 
 $logDirectory = Split-Path -Path $LogPath -Parent
-Ensure-Directory -Path $logDirectory
-New-Item -Path $LogPath -ItemType File -Force | Out-Null
+try {
+    Ensure-Directory -Path $logDirectory
+    New-Item -Path $LogPath -ItemType File -Force | Out-Null
+}
+catch {
+    throw "Failed to create log file at '$LogPath': $($_.Exception.Message)"
+}
 
 $mainProgressId = 0
 $mainActivity = "Room account password expiration remediation"
